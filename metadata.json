@@ -1,0 +1,6 @@
+{
+  "name": "可转债抢权安全垫计算器",
+  "description": "获取待发可转债数据并计算上市预估价格、收益安全垫与最优抢权策略。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
