@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BondData, CalculationInputs, CalculationResult, TableRowData } from '../types';
-import { calculateBond } from '../utils/calculator';
-import { Calculator, RefreshCw, AlertCircle, Info, ShieldCheck, Banknote, Search, Table as TableIcon, Sparkles, Loader2, ChevronDown, ChevronUp, Landmark, FileText, TrendingUp, HelpCircle, Activity } from 'lucide-react';
+import {
+  buildAllocationRows,
+  calculateBond,
+  getDefaultHoldingShares,
+  isSubscriptionOpen,
+  pickSubscriptionDate,
+} from '../utils/calculator';
+import { Calculator, RefreshCw, AlertCircle, Info, ShieldCheck, Banknote, Search, Table as TableIcon, Sparkles, Loader2, ChevronDown, ChevronUp, Landmark, FileText, TrendingUp, HelpCircle, Activity, X } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, PolarRadiusAxis } from 'recharts';
 
 const getScaleScore = (amount: number | string, restrictedRatio: number | string) => {
@@ -129,7 +135,18 @@ const getDemonScore = (scaleScore: number, indScore: number, liquidity: number) 
     return mark;
 };
 
+const formatNumber = (value: number, digits: number) => {
+  return Number(value || 0).toLocaleString('zh-CN', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+};
 
+const formatInteger = (value: number) => {
+  return Number(value || 0).toLocaleString('zh-CN', {
+    maximumFractionDigits: 0,
+  });
+};
 
 
 
@@ -147,6 +164,7 @@ export default function BondDashboard() {
   const [cushionFilter, setCushionFilter] = useState('ALL');
   const [expandedStockCode, setExpandedStockCode] = useState<string | null>(null);
   const [radarExpandedStockCode, setRadarExpandedStockCode] = useState<string | null>(null);
+  const [allocationModalRow, setAllocationModalRow] = useState<TableRowData | null>(null);
 
   // Initial Fetch
   useEffect(() => {
@@ -258,7 +276,7 @@ export default function BondDashboard() {
       const isSH = stockCode.startsWith('6');
       const isStarBoard = stockCode.startsWith('688');
       const stockPrice = typeof item.price === 'number' ? item.price : parseFloat(item.price || '0');
-      const defaultHoldingShares = stockPrice > 0 ? Math.floor(globalCapital / stockPrice / 100) * 100 : 0;
+      const defaultHoldingShares = getDefaultHoldingShares(stockCode, stockPrice, globalCapital);
       
       const sharesForOneLot = item.apply10 || 0;
       let minOneLotShares: number | undefined;
@@ -292,6 +310,7 @@ export default function BondDashboard() {
         ration: typeof item.ration === 'number' ? item.ration : parseFloat(item.ration || '0'),
         price: stockPrice,
         ma20_price: typeof item.ma20_price === 'number' ? item.ma20_price : parseFloat(item.ma20_price || '0'),
+        subscriptionDate: pickSubscriptionDate(item),
       };
 
       return {
@@ -313,7 +332,7 @@ export default function BondDashboard() {
     return currentRows.map(row => {
       let hs = row.holdingShares;
       if (row.bond.stockPrice > 0) {
-        hs = Math.floor(capital / row.bond.stockPrice / 100) * 100;
+        hs = getDefaultHoldingShares(row.bond.stockCode, row.bond.stockPrice, capital);
       }
       
       let result: CalculationResult | undefined;
@@ -349,7 +368,7 @@ export default function BondDashboard() {
   };
 
   const filteredRows = useMemo(() => {
-    let result = rows;
+    let result = rows.filter(r => isSubscriptionOpen(r.bond.subscriptionDate));
     
     // 1. Search Query
     if (searchQuery) {
@@ -364,11 +383,11 @@ export default function BondDashboard() {
     // 2. Trend Filter
     if (trendFilter !== 'ALL') {
       if (trendFilter === 'STRONG') {
-        result = result.filter(r => r.bond.isThreeDaysUp || Number(r.bond.recentMaxGain) > 10);
+        result = result.filter(r => r.isThreeDaysUp || Number(r.recentMaxGain) > 10);
       } else if (trendFilter === 'SAFE_SCORE') {
-        result = result.filter(r => (r.bond.stockSafetyScore || 0) >= 4);
+        result = result.filter(r => (r.stockSafetyScore || 0) >= 4);
       } else if (trendFilter === 'VOLUME') {
-        result = result.filter(r => r.bond.isVolumeAmplified);
+        result = result.filter(r => r.isVolumeAmplified);
       }
     }
     
@@ -419,6 +438,16 @@ export default function BondDashboard() {
 
     return result;
   }, [rows, searchQuery, trendFilter, progressFilter, scaleFilter, cushionFilter]);
+
+  const allocationRows = useMemo(() => {
+    if (!allocationModalRow) return [];
+    return buildAllocationRows(
+      allocationModalRow.bond,
+      allocationModalRow.premiumRate,
+      allocationModalRow.restrictedRatio || 0,
+      30,
+    );
+  }, [allocationModalRow]);
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
@@ -827,9 +856,14 @@ export default function BondDashboard() {
                                  <span className="text-gray-300">-</span>
                               ) : res && row.holdingShares > 0 ? (
                                  <>
-                                   <span className={`font-semibold ${res.generalSafetyCushion > 0 ? 'text-purple-600' : 'text-red-500'}`}>
+                                   <button
+                                     type="button"
+                                     onClick={() => setAllocationModalRow(row)}
+                                     className={`w-fit font-semibold underline decoration-dotted underline-offset-4 hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-purple-200 rounded-sm ${res.generalSafetyCushion > 0 ? 'text-purple-600' : 'text-red-500'}`}
+                                     title="查看前三十档配售测算表"
+                                   >
                                      {res.generalSafetyCushion > 0 ? '+' : ''}{res.generalSafetyCushion.toFixed(2)}%
-                                   </span>
+                                   </button>
                                    <span className="text-[10px] text-gray-400 mt-0.5">
                                       预计配: {b.market === 'SH' ? `${res.allocatedLots}手` : `${res.allocatedBonds}张`}
                                    </span>
@@ -994,6 +1028,84 @@ export default function BondDashboard() {
           </table>
         </div>
       </div>
+
+      {allocationModalRow && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+          onClick={() => setAllocationModalRow(null)}
+        >
+          <div
+            className="w-full max-w-6xl max-h-[86vh] overflow-hidden rounded-lg bg-white shadow-xl border border-gray-200"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${allocationModalRow.bond.bondName} 配售测算表`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {allocationModalRow.bond.bondName} 配售测算表
+                </h2>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                  <span>{allocationModalRow.bond.stockName} {allocationModalRow.bond.stockCode}</span>
+                  <span>转债规模 {formatNumber(allocationModalRow.bond.issueSize || 0, 2)} 亿</span>
+                  <span>预估溢价率 {formatNumber(allocationModalRow.premiumRate, 2)}%</span>
+                  {allocationModalRow.bond.subscriptionDate && (
+                    <span>申购日 {allocationModalRow.bond.subscriptionDate}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllocationModalRow(null)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                aria-label="关闭配售测算表"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(86vh-88px)] overflow-auto">
+              <table className="w-full min-w-[980px] text-left text-sm">
+                <thead className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-700">
+                  <tr>
+                    <th className="px-3 py-2 w-12">序号</th>
+                    <th className="px-3 py-2">配售1000元的股数</th>
+                    <th className="px-3 py-2">转债规模</th>
+                    <th className="px-3 py-2">流动规模</th>
+                    <th className="px-3 py-2">股票数量</th>
+                    <th className="px-3 py-2">买入资金</th>
+                    <th className="px-3 py-2">获取数量（张）</th>
+                    <th className="px-3 py-2">需缴纳金额</th>
+                    <th className="px-3 py-2">预计收益</th>
+                    <th className="px-3 py-2">安全垫</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {allocationRows.map((item) => (
+                    <tr key={item.index} className={item.index % 2 === 0 ? 'bg-white' : 'bg-gray-50/70'}>
+                      <td className="px-3 py-2 font-semibold text-gray-700">{item.index}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatNumber(item.sharesForOneLot, 1)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatNumber(item.issueSize, 3)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatNumber(item.circulatingSize, 2)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.stockQuantity)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatNumber(item.buyCapital, 1)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.acquiredBonds)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.paymentAmount)}</td>
+                      <td className={`px-3 py-2 font-mono ${item.estimatedProfit >= 0 ? 'text-purple-700' : 'text-red-600'}`}>
+                        {formatNumber(item.estimatedProfit, 5)}
+                      </td>
+                      <td className={`px-3 py-2 font-mono font-semibold ${item.safetyCushion >= 0 ? 'text-purple-700' : 'text-red-600'}`}>
+                        {formatNumber(item.safetyCushion, 2)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

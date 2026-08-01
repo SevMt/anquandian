@@ -19,6 +19,7 @@ export interface BondData {
   ration?: number;
   price?: number;
   ma20_price?: number;
+  subscriptionDate?: string; // 申购日期，过期后不再展示
 }
 
 export interface CalculationInputs {
@@ -43,6 +44,19 @@ export interface CalculationResult {
   totalCapital: number; // 投入总资金
   totalEstimatedProfit: number; // 预计总收益
   generalSafetyCushion: number; // 收益安全垫 %
+}
+
+export interface AllocationTableRow {
+  index: number;
+  sharesForOneLot: number;
+  issueSize: number;
+  circulatingSize: number;
+  stockQuantity: number;
+  buyCapital: number;
+  acquiredBonds: number;
+  paymentAmount: number;
+  estimatedProfit: number;
+  safetyCushion: number;
 }
 
 export interface ComparableBond {
