@@ -187,10 +187,11 @@ export default function BondDashboard() {
         throw new Error('未能解析集思录数据或当前无待发转债。');
       }
 
-      setRows(recalculateRows(parsedRows, globalCapital));
+      const activeRows = parsedRows.filter(r => isSubscriptionOpen(r.bond.subscriptionDate));
+      setRows(recalculateRows(activeRows, globalCapital));
       
       // Auto-trigger AI estimation for all available bonds
-      const bondsForAI = parsedRows.map(r => ({
+      const bondsForAI = activeRows.map(r => ({
         stockCode: r.bond.stockCode,
         stockName: r.bond.stockName,
         bondName: r.bond.bondName,
@@ -199,7 +200,7 @@ export default function BondDashboard() {
         pma_rt: typeof r.bond.pma_rt === 'number' ? r.bond.pma_rt : Number(r.bond.pma_rt) || 100,
         pb: typeof r.bond.pb === 'number' ? r.bond.pb : parseFloat(String(r.bond.pb)) || 0
       }));
-      triggerAIEstimation(bondsForAI, parsedRows);
+      triggerAIEstimation(bondsForAI, activeRows);
 
     } catch (err: any) {
       setError(err.message || '网络请求失败或代理被拦截。');
@@ -829,9 +830,7 @@ export default function BondDashboard() {
                         <td className="px-4 py-3">
                           {b.market === 'SH' ? (
                              <div className="flex flex-col">
-                                {row.isEstimating ? (
-                                  <span className="text-gray-300">-</span>
-                                ) : res && res.optimalSafetyCushion !== 0 ? (
+                                {res && res.optimalSafetyCushion !== 0 ? (
                                   <span className={`font-semibold ${res.optimalSafetyCushion > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                                     {res.optimalSafetyCushion > 0 ? '+' : ''}{res.optimalSafetyCushion.toFixed(2)}%
                                   </span>
@@ -852,9 +851,7 @@ export default function BondDashboard() {
                         {/* 大众版安全垫 */}
                         <td className="px-4 py-3">
                            <div className="flex flex-col">
-                              {row.isEstimating ? (
-                                 <span className="text-gray-300">-</span>
-                              ) : res && row.holdingShares > 0 ? (
+                              {res && row.holdingShares > 0 ? (
                                  <>
                                    <button
                                      type="button"
