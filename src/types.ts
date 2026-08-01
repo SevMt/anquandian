@@ -54,6 +54,8 @@ export interface AllocationTableRow {
   stockQuantity: number;
   buyCapital: number;
   acquiredBonds: number;
+  acquiredQuantity: number;
+  acquiredUnit: '张' | '手';
   paymentAmount: number;
   estimatedProfit: number;
   safetyCushion: number;

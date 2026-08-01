@@ -1072,7 +1072,9 @@ export default function BondDashboard() {
                     <th className="px-3 py-2">流动规模</th>
                     <th className="px-3 py-2">股票数量</th>
                     <th className="px-3 py-2">买入资金</th>
-                    <th className="px-3 py-2">获取数量（张）</th>
+                    <th className="px-3 py-2">
+                      获取数量（{allocationModalRow.bond.market === 'SH' ? '手' : '张'}）
+                    </th>
                     <th className="px-3 py-2">需缴纳金额</th>
                     <th className="px-3 py-2">预计收益</th>
                     <th className="px-3 py-2">安全垫</th>
@@ -1087,10 +1089,10 @@ export default function BondDashboard() {
                       <td className="px-3 py-2 font-mono text-gray-900">{formatNumber(item.circulatingSize, 2)}</td>
                       <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.stockQuantity)}</td>
                       <td className="px-3 py-2 font-mono text-gray-900">{formatNumber(item.buyCapital, 1)}</td>
-                      <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.acquiredBonds)}</td>
+                      <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.acquiredQuantity)}</td>
                       <td className="px-3 py-2 font-mono text-gray-900">{formatInteger(item.paymentAmount)}</td>
                       <td className={`px-3 py-2 font-mono ${item.estimatedProfit >= 0 ? 'text-purple-700' : 'text-red-600'}`}>
-                        {formatNumber(item.estimatedProfit, 5)}
+                        {formatNumber(item.estimatedProfit, 2)}
                       </td>
                       <td className={`px-3 py-2 font-mono font-semibold ${item.safetyCushion >= 0 ? 'text-purple-700' : 'text-red-600'}`}>
                         {formatNumber(item.safetyCushion, 2)}%

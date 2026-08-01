@@ -145,6 +145,8 @@ export function buildAllocationRows(
     const canCalculate = bond.conversionPrice > 0 && bond.sharesForOneLot > 0 && stockQuantity > 0;
     const result = canCalculate ? calculateBond(bond, { premiumRate, holdingShares: stockQuantity }) : undefined;
     const acquiredBonds = result?.allocatedBonds || 0;
+    const acquiredUnit = bond.market === 'SH' ? '手' : '张';
+    const acquiredQuantity = bond.market === 'SH' ? result?.allocatedLots || 0 : acquiredBonds;
 
     return {
       index,
@@ -154,6 +156,8 @@ export function buildAllocationRows(
       stockQuantity,
       buyCapital,
       acquiredBonds,
+      acquiredQuantity,
+      acquiredUnit,
       paymentAmount: acquiredBonds * 100,
       estimatedProfit: result?.totalEstimatedProfit || 0,
       safetyCushion: result?.generalSafetyCushion || 0,

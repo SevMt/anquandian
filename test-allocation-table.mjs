@@ -7,13 +7,13 @@ import {
 
 const baseBond = {
   id: 'mock',
-  bondCode: '113000',
-  bondName: '测试转债',
-  stockCode: '600000',
+  bondCode: '123280',
+  bondName: '三鑫转债',
+  stockCode: '300453',
   stockName: '测试股份',
   stockPrice: 9.75,
   conversionPrice: 5.3,
-  market: 'SH',
+  market: 'SZ',
   sharesForOneLot: 985,
   progressName: '待申购',
   issueSize: 3.72,
@@ -24,11 +24,19 @@ assert.equal(rows.length, 30);
 assert.equal(rows[0].stockQuantity, 100);
 assert.equal(rows[29].stockQuantity, 3000);
 assert.equal(rows[0].buyCapital, 975);
+assert.equal(rows[0].acquiredQuantity, 1);
+assert.equal(rows[0].acquiredUnit, '张');
 assert.equal(rows[0].paymentAmount, rows[0].acquiredBonds * 100);
 assert.equal(rows[0].issueSize, 3.72);
 assert.equal(rows[0].circulatingSize, 3.72);
 
-const starRows = buildAllocationRows({ ...baseBond, stockCode: '688092' }, 20, 10, 30);
+const shRows = buildAllocationRows({ ...baseBond, stockCode: '600000', market: 'SH' }, 20, 0, 30);
+assert.equal(shRows[5].stockQuantity, 600);
+assert.equal(shRows[5].acquiredQuantity, 1);
+assert.equal(shRows[5].acquiredUnit, '手');
+assert.equal(shRows[5].paymentAmount, 1000);
+
+const starRows = buildAllocationRows({ ...baseBond, stockCode: '688092', market: 'SH' }, 20, 10, 30);
 assert.equal(starRows[0].stockQuantity, 200);
 assert.equal(starRows[1].stockQuantity, 300);
 assert.equal(starRows[29].stockQuantity, 3100);
