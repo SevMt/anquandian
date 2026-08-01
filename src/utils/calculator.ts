@@ -44,6 +44,11 @@ const dateStringToDayKey = (value: string) => {
   return year * 10000 + month * 100 + day;
 };
 
+const roundTo = (value: number, digits: number) => {
+  const multiplier = 10 ** digits;
+  return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
+};
+
 export function isSubscriptionOpen(subscriptionDate?: string, now = new Date()): boolean {
   const normalized = normalizeDateString(subscriptionDate);
   if (!normalized) return true;
@@ -92,20 +97,20 @@ export function calculateBond(bond: BondData, inputs: CalculationInputs): Calcul
 
   if (market === 'SH') {
     // 沪市计算：预计总收益 = 持有股票数量 / “配售1000元的股数” * 每手可转债的收益
-    // 规则: 小数小于0.6的都可以忽略，大于0.6可进位为1手
+    // 规则: 小数部分大于0.685时进位为完整1手
     const rawLots = holdingShares / sharesForOneLot;
     const integer = Math.floor(rawLots);
     const decimal = rawLots - integer;
-    allocatedLots = decimal >= 0.6 ? integer + 1 : integer;
+    allocatedLots = decimal > 0.685 ? integer + 1 : integer;
     allocatedBonds = allocatedLots * 10;
     totalEstimatedProfit = allocatedLots * profitPerLot;
   } else {
     // 深市计算：预计总收益 = 持有股票数量 / “配售1000元的股数” * 10 * 每张可转债的收益
-    // 规则: 乘以10后，小数小于0.6的都可以忽略，大于0.6可进位为1张
+    // 规则: 乘以10后，小数部分大于0.685时进位为完整1张
     const rawBonds = (holdingShares / sharesForOneLot) * 10;
     const integer = Math.floor(rawBonds);
     const decimal = rawBonds - integer;
-    allocatedBonds = decimal >= 0.6 ? integer + 1 : integer;
+    allocatedBonds = decimal > 0.685 ? integer + 1 : integer;
     allocatedLots = allocatedBonds / 10;
     totalEstimatedProfit = allocatedBonds * profitPerBond;
   }
@@ -159,7 +164,7 @@ export function buildAllocationRows(
       acquiredQuantity,
       acquiredUnit,
       paymentAmount: acquiredBonds * 100,
-      estimatedProfit: result?.totalEstimatedProfit || 0,
+      estimatedProfit: roundTo(result?.totalEstimatedProfit || 0, 2),
       safetyCushion: result?.generalSafetyCushion || 0,
     };
   });
