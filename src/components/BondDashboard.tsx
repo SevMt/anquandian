@@ -458,7 +458,7 @@ export default function BondDashboard() {
         <div>
           <h1 className="text-3xl font-medium tracking-tight text-gray-900 flex items-center space-x-3">
             <TableIcon className="w-8 h-8 text-blue-600" />
-            <span>待发可转债安全垫分析</span>
+            <span>择再青松 | 待发可转债辅助工具</span>
           </h1>
           <p className="text-gray-500 mt-1">
             自动获取近期新上市同行业转债进行智能溢价预估，计算最优收益安全垫。
