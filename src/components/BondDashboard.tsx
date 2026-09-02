@@ -463,6 +463,9 @@ export default function BondDashboard() {
           <p className="text-gray-500 mt-1">
             自动获取近期新上市同行业转债进行智能溢价预估，计算最优收益安全垫。
           </p>
+          <p className="text-gray-500 mt-1">
+            请关注《择再青松》小程序，微信小程序可直接搜索添加
+          </p>
         </div>
         <button 
           onClick={handleFetchJisilu}
