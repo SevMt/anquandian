@@ -7,7 +7,16 @@ import {
   isSubscriptionOpen,
   pickSubscriptionDate,
 } from '../utils/calculator';
-import { Calculator, RefreshCw, AlertCircle, Info, ShieldCheck, Banknote, Search, Table as TableIcon, Sparkles, Loader2, ChevronDown, ChevronUp, Landmark, FileText, TrendingUp, HelpCircle, Activity, X } from 'lucide-react';
+import {
+  getCirculatingSize,
+  getIssueToMarketCapRatio,
+  matchesBondScaleRanges,
+  matchesMarketCapRanges,
+  matchesNumericRange,
+  NumericRange,
+} from '../utils/bondFilters';
+import { getDashboardView } from '../utils/dashboardView';
+import { Calculator, RefreshCw, AlertCircle, Info, ShieldCheck, Banknote, Search, Table as TableIcon, Sparkles, Loader2, ChevronDown, ChevronUp, Landmark, FileText, TrendingUp, HelpCircle, Activity, X, Minimize2, Maximize2 } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, PolarRadiusAxis } from 'recharts';
 
 const getScaleScore = (amount: number | string, restrictedRatio: number | string) => {
@@ -148,6 +157,38 @@ const formatInteger = (value: number) => {
   });
 };
 
+interface NumericRangeFilterProps {
+  label?: string;
+  name: string;
+  value: NumericRange;
+  onChange: (value: NumericRange) => void;
+}
+
+const NumericRangeFilter = ({ label, name, value, onChange }: NumericRangeFilterProps) => (
+  <div className="flex items-center gap-1 text-[10px] font-normal text-gray-500">
+    {label && <span className="w-4 shrink-0">{label}</span>}
+    <input
+      type="number"
+      inputMode="decimal"
+      aria-label={`${name}最小值`}
+      placeholder="最小"
+      value={value.min}
+      onChange={(event) => onChange({ ...value, min: event.target.value })}
+      className="w-[52px] rounded border border-gray-200 bg-white px-1 py-1 text-center outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+    />
+    <span>-</span>
+    <input
+      type="number"
+      inputMode="decimal"
+      aria-label={`${name}最大值`}
+      placeholder="最大"
+      value={value.max}
+      onChange={(event) => onChange({ ...value, max: event.target.value })}
+      className="w-[52px] rounded border border-gray-200 bg-white px-1 py-1 text-center outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+    />
+  </div>
+);
+
 
 
 export default function BondDashboard() {
@@ -159,9 +200,16 @@ export default function BondDashboard() {
   const [globalCapital, setGlobalCapital] = useState<number>(50000); // 50,000 元
   const [searchQuery, setSearchQuery] = useState('');
   const [progressFilter, setProgressFilter] = useState('ALL');
-  const [scaleFilter, setScaleFilter] = useState('ALL');
   const [trendFilter, setTrendFilter] = useState('ALL');
   const [cushionFilter, setCushionFilter] = useState('ALL');
+  const [conversionValueRange, setConversionValueRange] = useState<NumericRange>({ min: '', max: '' });
+  const [marketCapRange, setMarketCapRange] = useState<NumericRange>({ min: '', max: '' });
+  const [issueToMarketCapRatioRange, setIssueToMarketCapRatioRange] = useState<NumericRange>({ min: '', max: '' });
+  const [issueSizeRange, setIssueSizeRange] = useState<NumericRange>({ min: '', max: '' });
+  const [circulatingSizeRange, setCirculatingSizeRange] = useState<NumericRange>({ min: '', max: '' });
+  const [listingPriceRange, setListingPriceRange] = useState<NumericRange>({ min: '', max: '' });
+  const [generalCushionRange, setGeneralCushionRange] = useState<NumericRange>({ min: '', max: '' });
+  const [isCompactMode, setIsCompactMode] = useState(false);
   const [expandedStockCode, setExpandedStockCode] = useState<string | null>(null);
   const [radarExpandedStockCode, setRadarExpandedStockCode] = useState<string | null>(null);
   const [allocationModalRow, setAllocationModalRow] = useState<TableRowData | null>(null);
@@ -306,6 +354,7 @@ export default function BondDashboard() {
         ratingCode: item.rating_cd || 'AA',
         pb: typeof item.pb === 'number' ? item.pb : parseFloat(item.pb || '1.5'),
         issueSize: typeof item.amount === 'number' ? item.amount : parseFloat(item.amount || '0'),
+        marketCap: typeof item.market_cap_yi === 'number' ? item.market_cap_yi : undefined,
         amount: typeof item.amount === 'number' ? item.amount : parseFloat(item.amount || '0'),
         pma_rt: typeof item.pma_rt === 'number' ? item.pma_rt : parseFloat(item.pma_rt || '100'),
         ration: typeof item.ration === 'number' ? item.ration : parseFloat(item.ration || '0'),
@@ -407,22 +456,24 @@ export default function BondDashboard() {
       }
     }
     
-    // 4. Scale Filter
-    if (scaleFilter !== 'ALL') {
-      result = result.filter(r => {
-        const amount = Number(r.bond.issueSize) || 0;
-        const rr = Number(r.restrictedRatio) || 0;
-        const circSize = amount * (1 - rr / 100);
-        if (scaleFilter === 'SMALL') {
-          return circSize < 1.5;
-        } else if (scaleFilter === 'MEDIUM') {
-          return circSize >= 1.5 && circSize <= 3.0;
-        } else if (scaleFilter === 'LARGE') {
-          return circSize > 3.0;
-        }
-        return true;
-      });
-    }
+    // 4. Numeric Filters
+    result = result.filter(r => (
+      matchesNumericRange(r.result?.conversionValue, conversionValueRange.min, conversionValueRange.max)
+      && matchesMarketCapRanges(
+        r.bond.marketCap,
+        Number(r.bond.issueSize) || 0,
+        marketCapRange,
+        issueToMarketCapRatioRange,
+      )
+      && matchesBondScaleRanges(
+        Number(r.bond.issueSize) || 0,
+        r.restrictedRatio,
+        issueSizeRange,
+        circulatingSizeRange,
+      )
+      && matchesNumericRange(r.result?.estimatedListingPrice, listingPriceRange.min, listingPriceRange.max)
+      && matchesNumericRange(r.result?.generalSafetyCushion, generalCushionRange.min, generalCushionRange.max)
+    ));
     
     // 5. Cushion Filter
     if (cushionFilter !== 'ALL') {
@@ -438,7 +489,20 @@ export default function BondDashboard() {
     }
 
     return result;
-  }, [rows, searchQuery, trendFilter, progressFilter, scaleFilter, cushionFilter]);
+  }, [
+    rows,
+    searchQuery,
+    trendFilter,
+    progressFilter,
+    cushionFilter,
+    conversionValueRange,
+    marketCapRange,
+    issueToMarketCapRatioRange,
+    issueSizeRange,
+    circulatingSizeRange,
+    listingPriceRange,
+    generalCushionRange,
+  ]);
 
   const allocationRows = useMemo(() => {
     if (!allocationModalRow) return [];
@@ -449,6 +513,17 @@ export default function BondDashboard() {
       30,
     );
   }, [allocationModalRow]);
+
+  const dashboardView = getDashboardView(isCompactMode);
+
+  const toggleCompactMode = () => {
+    const nextCompactMode = !isCompactMode;
+    setIsCompactMode(nextCompactMode);
+    if (nextCompactMode) {
+      setExpandedStockCode(null);
+      setRadarExpandedStockCode(null);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
@@ -467,14 +542,25 @@ export default function BondDashboard() {
             请关注《择再青松》小程序，微信小程序可直接搜索添加
           </p>
         </div>
-        <button 
-          onClick={handleFetchJisilu}
-          disabled={isLoading}
-          className="flex items-center space-x-2 text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>{isLoading ? '同步中...' : '同步最新待发转债'}</span>
-        </button>
+        <div className="flex w-full flex-col gap-2 md:w-auto">
+          <button
+            type="button"
+            onClick={toggleCompactMode}
+            aria-pressed={isCompactMode}
+            className="flex items-center justify-center space-x-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+          >
+            {isCompactMode ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
+            <span>{dashboardView.toggleLabel}</span>
+          </button>
+          <button
+            onClick={handleFetchJisilu}
+            disabled={isLoading}
+            className="flex items-center justify-center space-x-2 text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>{isLoading ? '同步中...' : '同步最新待发转债'}</span>
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -518,20 +604,17 @@ export default function BondDashboard() {
             <thead className="bg-gray-50 text-gray-600 border-b border-gray-200 font-medium">
               <tr>
                 <th className="px-4 py-3">
-                  <div className="flex flex-col space-y-1.5">
+                  <div className="flex flex-col justify-end h-full pt-4">
                     <span className="text-gray-700 font-semibold">转债/正股</span>
-                    <select
-                      value={trendFilter}
-                      onChange={(e) => setTrendFilter(e.target.value)}
-                      className="text-xs font-normal text-gray-500 bg-white border border-gray-200 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer max-w-[110px]"
-                    >
-                      <option value="ALL">全部趋势</option>
-                      <option value="STRONG">强势上涨/连阳</option>
-                      <option value="VOLUME">量能温和放大</option>
-                      <option value="SAFE_SCORE">正股优质(4分+)</option>
-                    </select>
                   </div>
                 </th>
+                {dashboardView.showMarketCap && <th className="px-4 py-3">
+                  <div className="flex flex-col space-y-1.5">
+                    <span className="text-gray-700 font-semibold">公司市值</span>
+                    <NumericRangeFilter label="市" name="公司市值" value={marketCapRange} onChange={setMarketCapRange} />
+                    <NumericRangeFilter label="占" name="转债/市值占比" value={issueToMarketCapRatioRange} onChange={setIssueToMarketCapRatioRange} />
+                  </div>
+                </th>}
                 <th className="px-4 py-3">
                   <div className="flex flex-col space-y-1.5">
                     <span className="text-gray-700 font-semibold">市场/进度</span>
@@ -549,29 +632,32 @@ export default function BondDashboard() {
                     </select>
                   </div>
                 </th>
-                <th className="px-4 py-3">
-                  <div className="flex flex-col justify-end h-full pt-4">
+                {dashboardView.showStockPrice && <th className="px-4 py-3">
+                  <div className="flex flex-col space-y-1.5">
                     <span className="text-gray-700 font-semibold">正股价/转股价</span>
+                    <select
+                      value={trendFilter}
+                      onChange={(e) => setTrendFilter(e.target.value)}
+                      className="max-w-[118px] cursor-pointer rounded border border-gray-200 bg-white px-1.5 py-1 text-xs font-normal text-gray-500 outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="ALL">全部趋势</option>
+                      <option value="STRONG">强势上涨/连阳</option>
+                      <option value="VOLUME">量能温和放大</option>
+                      <option value="SAFE_SCORE">正股优质(4分+)</option>
+                    </select>
                   </div>
-                </th>
+                </th>}
                 <th className="px-4 py-3">
-                  <div className="flex flex-col justify-end h-full pt-4">
+                  <div className="flex flex-col space-y-1.5">
                     <span className="text-gray-700 font-semibold">转股价值</span>
+                    <NumericRangeFilter name="转股价值" value={conversionValueRange} onChange={setConversionValueRange} />
                   </div>
                 </th>
                 <th className="px-4 py-3">
                   <div className="flex flex-col space-y-1.5">
                     <span className="text-gray-700 font-semibold">发行/流通规模</span>
-                    <select
-                      value={scaleFilter}
-                      onChange={(e) => setScaleFilter(e.target.value)}
-                      className="text-xs font-normal text-gray-500 bg-white border border-gray-200 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer max-w-[110px]"
-                    >
-                      <option value="ALL">全部规模</option>
-                      <option value="SMALL">迷你盘 (&lt;1.5亿)</option>
-                      <option value="MEDIUM">中小盘 (1.5-3亿)</option>
-                      <option value="LARGE">大盘 (&gt;3.0亿)</option>
-                    </select>
+                    <NumericRangeFilter label="发" name="发行规模" value={issueSizeRange} onChange={setIssueSizeRange} />
+                    <NumericRangeFilter label="流" name="流通规模" value={circulatingSizeRange} onChange={setCirculatingSizeRange} />
                   </div>
                 </th>
                 <th className="px-4 py-3 w-40">
@@ -588,8 +674,9 @@ export default function BondDashboard() {
                   </div>
                 </th>
                 <th className="px-4 py-3">
-                  <div className="flex flex-col justify-end h-full pt-4">
+                  <div className="flex flex-col space-y-1.5">
                     <span className="text-gray-700 font-semibold">预估上市价</span>
+                    <NumericRangeFilter name="预估上市价" value={listingPriceRange} onChange={setListingPriceRange} />
                   </div>
                 </th>
                 <th className="px-4 py-3">
@@ -615,11 +702,12 @@ export default function BondDashboard() {
                   </div>
                 </th>
                 <th className="px-4 py-3">
-                  <div className="flex flex-col justify-end h-full pt-4">
+                  <div className="flex flex-col space-y-1.5">
                     <div className="flex items-center text-purple-600 font-semibold">
                       <Banknote className="w-4 h-4 mr-1" />
                       <span>大众版安全垫</span>
                     </div>
+                    <NumericRangeFilter name="大众版安全垫" value={generalCushionRange} onChange={setGeneralCushionRange} />
                   </div>
                 </th>
               </tr>
@@ -627,7 +715,7 @@ export default function BondDashboard() {
             <tbody className="divide-y divide-gray-100">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center text-gray-500">
+                  <td colSpan={dashboardView.visibleColumnCount} className="px-4 py-12 text-center text-gray-500">
                     {isLoading ? '数据加载中...' : '暂无匹配数据'}
                   </td>
                 </tr>
@@ -640,15 +728,18 @@ export default function BondDashboard() {
                   return (
                     <React.Fragment key={b.id}>
                       <tr className="hover:bg-gray-50/50 transition-colors group">
-                        <td className="px-4 py-3 cursor-pointer select-none" onClick={() => setExpandedStockCode(prev => prev === b.stockCode ? null : b.stockCode)}>
+                        <td
+                          className={`px-4 py-3 select-none ${dashboardView.showExpandedDetails ? 'cursor-pointer' : ''}`}
+                          onClick={dashboardView.showExpandedDetails ? () => setExpandedStockCode(prev => prev === b.stockCode ? null : b.stockCode) : undefined}
+                        >
                           <div className="flex items-center space-x-2">
-                            <span className="text-gray-400 group-hover:text-blue-500 transition-colors">
+                            {dashboardView.showExpandedDetails && <span className="text-gray-400 group-hover:text-blue-500 transition-colors">
                               {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                            </span>
+                            </span>}
                             <div>
                               <div className="font-medium text-gray-900 flex items-center space-x-1.5">
                                 <span>{b.bondName}</span>
-                                <div 
+                                {dashboardView.showExpandedDetails && <div
                                   className={`cursor-pointer w-4 h-4 ml-1 flex items-center justify-center rounded bg-opacity-50 transition-colors ${radarExpandedStockCode === b.stockCode ? 'text-white bg-blue-500' : 'text-blue-500 bg-blue-50 hover:bg-opacity-100'}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -657,7 +748,7 @@ export default function BondDashboard() {
                                   title="点击展开综合评分雷达图"
                                 >
                                   <Activity className="w-[10px] h-[10px]" />
-                                </div>
+                                </div>}
                                 <span className="text-[10px] text-gray-400 font-mono">({b.bondCode})</span>
                               </div>
                               <div className="text-xs text-gray-500 flex items-center space-x-1 mt-0.5">
@@ -667,7 +758,7 @@ export default function BondDashboard() {
                               </div>
                             </div>
                           </div>
-                          {row.industry && (
+                          {dashboardView.showConcepts && row.industry && (
                             <div className="text-[10px] mt-2 flex flex-wrap gap-1 ml-6 max-w-[280px]">
                               {row.industry.split(' | ').map((part, index) => {
                                 if (index === 0) {
@@ -687,7 +778,19 @@ export default function BondDashboard() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        {dashboardView.showMarketCap && <td className="px-4 py-3">
+                          {typeof b.marketCap === 'number' ? (
+                            <div className="flex flex-col">
+                              <span className="font-medium text-gray-900">{b.marketCap.toFixed(2)}亿</span>
+                              <span className="mt-0.5 text-xs text-gray-500">
+                                转债/市值: {getIssueToMarketCapRatio(Number(b.issueSize) || 0, b.marketCap)?.toFixed(2)}%
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>}
+                        {dashboardView.showStockPrice && <td className="px-4 py-3">
                            <div className="flex flex-col items-start gap-1">
                               <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${b.market === 'SH' ? 'bg-orange-50 text-orange-700' : 'bg-cyan-50 text-cyan-700'}`}>
                                   {b.market === 'SH' ? '沪市' : '深市'}
@@ -696,7 +799,7 @@ export default function BondDashboard() {
                                   {b.progressName.replace(/<[^>]*>?/gm, ' ')}
                               </span>
                            </div>
-                        </td>
+                        </td>}
                         <td className="px-4 py-3">
                           <div className="flex items-center space-x-2">
                             {(row.isThreeDaysUp || row.isVolumeAmplified) && (
@@ -738,7 +841,7 @@ export default function BondDashboard() {
                                <div className="text-gray-900 font-medium">发: {b.issueSize.toFixed(2)}亿</div>
                                {typeof row.restrictedRatio === 'number' ? (
                                   <div className="text-xs text-gray-500 mt-0.5" title={`大股东总占比(限售): ${row.restrictedRatio.toFixed(2)}%`}>
-                                     流: {(b.issueSize * (1 - row.restrictedRatio / 100)).toFixed(2)}亿
+                                     流: {getCirculatingSize(b.issueSize, row.restrictedRatio).toFixed(2)}亿
                                   </div>
                                ) : (
                                   <div className="text-xs text-gray-300 mt-0.5">流: -</div>
@@ -877,9 +980,9 @@ export default function BondDashboard() {
                       </tr>
 
                       {/* Expanded Radar Row */}
-                      {radarExpandedStockCode === b.stockCode && (
+                      {dashboardView.showExpandedDetails && radarExpandedStockCode === b.stockCode && (
                         <tr className="bg-slate-50/20 border-t border-b border-gray-100">
-                          <td colSpan={9} className="px-6 py-4">
+                          <td colSpan={dashboardView.visibleColumnCount} className="px-6 py-4">
                             <div className="bg-white rounded-xl border border-gray-200/80 shadow-sm p-5 space-y-4 whitespace-normal flex flex-col items-center">
                               <h3 className="font-semibold text-gray-900 text-sm mb-2 flex items-center space-x-2">
                                 <Activity className="w-4 h-4 text-blue-500" />
@@ -908,9 +1011,9 @@ export default function BondDashboard() {
                       )}
 
                       {/* Expanded Research Detail Row */}
-                      {isExpanded && (
+                      {dashboardView.showExpandedDetails && isExpanded && (
                         <tr className="bg-slate-50/50 border-t border-b border-gray-100">
-                          <td colSpan={9} className="px-6 py-4">
+                          <td colSpan={dashboardView.visibleColumnCount} className="px-6 py-4">
                             <div className="bg-white rounded-xl border border-gray-200/80 shadow-sm p-5 space-y-4 whitespace-normal">
                               {/* Header */}
                               <div className="flex items-center justify-between border-b border-gray-100 pb-2.5">

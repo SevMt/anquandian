@@ -14,6 +14,7 @@ export interface BondData {
   ratingCode?: string; // 信用评级
   pb?: number; // 市净率
   issueSize?: number; // 发行规模(亿元)
+  marketCap?: number; // 公司总市值(亿元)
   amount?: number;
   pma_rt?: number;
   ration?: number;

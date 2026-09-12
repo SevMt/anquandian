@@ -6,6 +6,8 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createRateLimit, handleInvite, requireApiAccess, requirePageAccess } from './src/utils/accessControl';
+import { getRestrictedRatioFromHolders } from './src/utils/bondFilters';
+import { fetchMarketCapsYi, fetchMarketCapYi, getMarketCapCacheTtl } from './src/utils/marketCap';
 
 const fetchWithRetry = async (url: string, options: any = {}, retries = 3) => {
   const mergedOptions = {
@@ -31,6 +33,221 @@ const fetchWithRetry = async (url: string, options: any = {}, retries = 3) => {
     }
   }
   throw new Error("unreachable");
+};
+
+const weeklyMarketCache = new Map<string, { timestamp: number; data: any }>();
+const WEEKLY_MARKET_CACHE_MS = 30 * 60 * 1000;
+
+const toNumber = (value: any, fallback = 0) => {
+  const num = Number.parseFloat(String(value ?? '').replace(/[,%℃°]/g, '').trim());
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const formatNumber = (value: any, digits = 2) => {
+  const num = toNumber(value, NaN);
+  if (!Number.isFinite(num)) return String(value ?? '-');
+  return num.toFixed(digits).replace(/\.?0+$/, '');
+};
+
+const findPreviousWeekRowIndex = (dates: string[]) => {
+  for (let i = dates.length - 1; i > 0; i -= 1) {
+    const curr = new Date(dates[i]);
+    const prev = new Date(dates[i - 1]);
+    if (!Number.isNaN(curr.getTime()) && !Number.isNaN(prev.getTime())) {
+      const diffDays = (curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000);
+      if (diffDays > 1) return i - 1;
+    }
+  }
+  return Math.max(0, dates.length - 6);
+};
+
+const findLastFridayLikeIndex = (dates: string[]) => {
+  if (dates.length <= 1) return 0;
+  for (let i = dates.length - 2; i >= 0; i -= 1) {
+    const d = new Date(dates[i]);
+    if (!Number.isNaN(d.getTime()) && d.getDay() === 5) return i;
+  }
+  return Math.max(0, dates.length - 6);
+};
+
+const parseJsArray = (html: string, variableName: string) => {
+  const match = html.match(new RegExp(`var\\s+${variableName}\\s*=\\s*(\\[[\\s\\S]*?\\]);`));
+  if (!match) throw new Error(`Missing ${variableName} in indicator page`);
+  return Function(`"use strict"; return (${match[1]});`)();
+};
+
+const parseIndicatorSeries = (html: string, key: string) => {
+  const match = html.match(new RegExp(`${key}\\s*:\\s*(\\[[\\s\\S]*?\\])\\s*,\\s*\\n`));
+  if (!match) throw new Error(`Missing ${key} in indicator page`);
+  return Function(`"use strict"; return (${match[1]});`)();
+};
+
+const judgeValuation = (above130Pct: number, cbTemp: number) => {
+  if (above130Pct >= 50 && cbTemp >= 70) return '历史级别高度';
+  if (above130Pct >= 45 && cbTemp >= 70) return '较高';
+  if (above130Pct >= 40 && cbTemp >= 60) return '较高';
+  if (above130Pct >= 35 && cbTemp >= 50) return '中等偏高';
+  if (above130Pct >= 30 && cbTemp >= 40) return '中等';
+  if (cbTemp >= 30) return '中等偏低';
+  return '较低';
+};
+
+const valuationEmoji = (valuation: string) => {
+  if (valuation.includes('历史')) return '🔴';
+  if (valuation.includes('较高')) return '🟠';
+  if (valuation.includes('中等')) return '🟡';
+  return '🟢';
+};
+
+const getLatestRowsFromIndexHistory = (raw: any) => {
+  const dates: string[] = raw.price_dt || [];
+  if (!dates.length) throw new Error('Missing convertible bond index dates');
+  const latestIndex = dates.length - 1;
+  const previousIndex = findPreviousWeekRowIndex(dates);
+
+  const rowAt = (index: number) => ({
+    price_dt: dates[index],
+    price: raw.price?.[index],
+    increase_val: raw.increase_val?.[index],
+    increase_rt: raw.increase_rt?.[index],
+    temperature: raw.temperature?.[index],
+    avg_price: raw.avg_price?.[index],
+    mid_price: raw.mid_price?.[index],
+    mid_convert_value: raw.mid_convert_value?.[index],
+    avg_premium_rt: raw.avg_premium_rt?.[index],
+    mid_premium_rt: raw.mid_premium_rt?.[index],
+    avg_ytm_rt: raw.avg_ytm_rt?.[index],
+    volume: raw.volume?.[index],
+    amount: raw.amount?.[index],
+    turnover_rt: raw.turnover_rt?.[index],
+    count: raw.count?.[index],
+    price_90: raw.price_90?.[index],
+    price_90_100: raw.price_90_100?.[index],
+    price_100_110: raw.price_100_110?.[index],
+    price_110_120: raw.price_110_120?.[index],
+    price_120_130: raw.price_120_130?.[index],
+    price_130: raw.price_130?.[index],
+  });
+
+  return {
+    latest: rowAt(latestIndex),
+    previous: rowAt(previousIndex),
+  };
+};
+
+const fetchAStockTemperature = async () => {
+  const response = await fetchWithRetry('https://www.jisilu.cn/data/indicator/', {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      Referer: 'https://www.jisilu.cn/data/indicator/',
+    },
+  }, 2);
+  const html = await response.text();
+  const dates = parseJsArray(html, '__date') as string[];
+  const pbTemps = parseIndicatorSeries(html, 'median_PB_t') as number[];
+  const latestIndex = dates.length - 1;
+  const previousIndex = findLastFridayLikeIndex(dates);
+  return {
+    latest: {
+      date: dates[latestIndex],
+      temperature: pbTemps[latestIndex],
+    },
+    previous: {
+      date: dates[previousIndex],
+      temperature: pbTemps[previousIndex],
+    },
+  };
+};
+
+const buildWeeklyReport = (summary: any) => {
+  const { cb, aStock, valuation } = summary;
+  const latest = cb.latest;
+  const previous = cb.previous;
+  const increase = toNumber(latest.increase_rt);
+  const direction = increase >= 0 ? '上涨' : '下跌';
+  const sep = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+
+  return [
+    '',
+    '📊 本周五可转债市场概况',
+    sep,
+    '',
+    `🔹 可转债指数：${formatNumber(latest.price, 3)}（上周 ${formatNumber(previous.price, 3)}）  ${direction} ${formatNumber(Math.abs(increase), 2)}%`,
+    `🔹 成交额：${formatNumber(latest.volume, 2)} 亿元（上周 ${formatNumber(previous.volume, 2)}）`,
+    `🔹 平均价格：${formatNumber(latest.avg_price, 3)}（上周 ${formatNumber(previous.avg_price, 3)}）`,
+    `🔹 价格中位数：${formatNumber(latest.mid_price, 3)}`,
+    `🔹 转股价值中位数：${formatNumber(latest.mid_convert_value, 2)}`,
+    `🔹 转股溢价率：${formatNumber(latest.avg_premium_rt, 2)}%（上周 ${formatNumber(previous.avg_premium_rt, 2)}%）`,
+    `🔹 到期收益率：${formatNumber(latest.avg_ytm_rt, 2)}%`,
+    `🔹 换手率：${formatNumber(latest.turnover_rt, 2)}%（上周 ${formatNumber(previous.turnover_rt, 2)}%）`,
+    `🔹 溢价率中位数：${formatNumber(latest.mid_premium_rt, 2)}%`,
+    '',
+    '📈 价格区间分布',
+    sep,
+    '',
+    `  <90     │ ${formatNumber(latest.price_90, 0)} 个`,
+    `  90~100  │ ${formatNumber(latest.price_90_100, 0)} 个`,
+    `  100~110 │ ${formatNumber(latest.price_100_110, 0)} 个`,
+    `  110~120 │ ${formatNumber(latest.price_110_120, 0)} 个`,
+    `  120~130 │ ${formatNumber(latest.price_120_130, 0)} 个`,
+    `  ≥130    │ ${formatNumber(latest.price_130, 0)} 个（占 ${formatNumber(summary.above130Pct, 1)}%）`,
+    '',
+    '🌡️ 市场情绪',
+    sep,
+    '',
+    `  A股温度：${formatNumber(aStock.latest.temperature, 2)} 度（上周 ${formatNumber(aStock.previous.temperature, 2)} 度）`,
+    `  转债温度：${formatNumber(latest.temperature, 2)} 度（上周 ${formatNumber(previous.temperature, 2)} 度）`,
+    '',
+    `${valuationEmoji(valuation)} 估值判断：${valuation}`,
+    '',
+  ].join('\n');
+};
+
+const fetchWeeklyMarketSummary = async () => {
+  const cached = weeklyMarketCache.get('default');
+  if (cached && Date.now() - cached.timestamp < WEEKLY_MARKET_CACHE_MS) {
+    return cached.data;
+  }
+
+  const [cbResponse, aStock] = await Promise.all([
+    fetchWithRetry('https://www.jisilu.cn/webapi/cb/index_history/', {
+      headers: {
+        Accept: 'application/json, text/javascript, */*; q=0.01',
+        Referer: 'https://www.jisilu.cn/web/data/cb/index',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    }, 2),
+    fetchAStockTemperature(),
+  ]);
+
+  const cbJson = await cbResponse.json();
+  if (cbJson.code !== 200 || !cbJson.data) {
+    throw new Error(cbJson.msg || 'Failed to fetch convertible bond index history');
+  }
+
+  const cb = getLatestRowsFromIndexHistory(cbJson.data);
+  const above130Pct = toNumber(cb.latest.count) > 0
+    ? Math.round((toNumber(cb.latest.price_130) / toNumber(cb.latest.count)) * 1000) / 10
+    : 0;
+  const valuation = judgeValuation(above130Pct, toNumber(cb.latest.temperature));
+  const summary = {
+    fetchedAt: new Date().toISOString(),
+    sources: {
+      cbIndex: 'https://www.jisilu.cn/webapi/cb/index_history/',
+      aStockTemperature: 'https://www.jisilu.cn/data/indicator/',
+    },
+    cb,
+    aStock,
+    above130Pct,
+    valuation,
+  };
+
+  const data = {
+    ...summary,
+    report: buildWeeklyReport(summary),
+  };
+  weeklyMarketCache.set('default', { timestamp: Date.now(), data });
+  return data;
 };
 
 const extractConcepts = (text: string) => {
@@ -96,6 +313,19 @@ async function startServer() {
     res.json({ hasGeminiKey: !!process.env.GEMINI_API_KEY });
   });
 
+  app.get('/api/market/weekly-summary', createRateLimit({ windowMs: 60 * 1000, maxRequests: 12 }), async (req, res) => {
+    try {
+      const data = await fetchWeeklyMarketSummary();
+      res.json(data);
+    } catch (error) {
+      console.error('Error in weekly-summary route:', error);
+      res.status(500).json({
+        error: 'Failed to fetch weekly market summary',
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // API to fetch Pre-issued convertible bonds from Jisilu
   app.get('/api/bonds/pre', createRateLimit({ windowMs: 60 * 1000, maxRequests: 20 }), async (req, res) => {
     try {
@@ -119,13 +349,40 @@ async function startServer() {
       let enrichedData = data;
       // Enrich with restricted ratio
       if (data && data.data && Array.isArray(data.data)) {
+        const now = Date.now();
+        const stockCodes = [...new Set<string>(
+          data.data
+            .map((item: any) => item.stock_id)
+            .filter((stockId: unknown): stockId is string => typeof stockId === 'string'),
+        )];
+        const uncachedStockCodes = stockCodes.filter(stockCode => {
+          const cached = marketCapCache.get(stockCode);
+          return !cached || now - cached.timestamp >= getMarketCapCacheTtl(cached.marketCap);
+        });
+        const fetchedMarketCaps = await fetchMarketCapsYi(uncachedStockCodes);
+        for (const stockCode of uncachedStockCodes) {
+          marketCapCache.set(stockCode, {
+            marketCap: fetchedMarketCaps.get(stockCode),
+            timestamp: Date.now(),
+          });
+        }
+
         const enrichedRows = [];
         const chunkSize = 20;
         for (let i = 0; i < data.data.length; i += chunkSize) {
           const chunk = data.data.slice(i, i + chunkSize);
           const chunkResults = await Promise.all(chunk.map(async (item: any) => {
-            let restricted_ratio = 0;
+            let restricted_ratio: number | undefined;
+            let market_cap_yi: number | undefined;
             if (item.stock_id) {
+              const marketCapEntry = marketCapCache.get(item.stock_id);
+              if (marketCapEntry && Date.now() - marketCapEntry.timestamp < getMarketCapCacheTtl(marketCapEntry.marketCap)) {
+                market_cap_yi = marketCapEntry.marketCap;
+              } else {
+                market_cap_yi = await fetchMarketCapYi(item.stock_id);
+                marketCapCache.set(item.stock_id, { marketCap: market_cap_yi, timestamp: Date.now() });
+              }
+
               const cacheEntry = restrictedRatioCache.get(item.stock_id);
               if (cacheEntry && Date.now() - cacheEntry.timestamp < 24 * 60 * 60 * 1000) {
                 restricted_ratio = cacheEntry.ratio;
@@ -136,30 +393,10 @@ async function startServer() {
                   const holdersResp = await fetchWithRetry(holdersUrl, {}, 2);
                   const holdersData = await holdersResp.json();
                   if (holdersData && holdersData.result && holdersData.result.data) {
-                    const holdersList = holdersData.result.data;
-                    // Group by END_DATE to find the most recent full report (at least 8-10 holders)
-                    const datesMap = new Map<string, any[]>();
-                    for (const h of holdersList) {
-                      if (!datesMap.has(h.END_DATE)) datesMap.set(h.END_DATE, []);
-                      datesMap.get(h.END_DATE)!.push(h);
+                    restricted_ratio = getRestrictedRatioFromHolders(holdersData.result.data);
+                    if (typeof restricted_ratio === 'number') {
+                      restrictedRatioCache.set(item.stock_id, { ratio: restricted_ratio, timestamp: Date.now() });
                     }
-                    let latestHolders: any[] = [];
-                    const sortedDates = Array.from(datesMap.keys()).sort((a, b) => b.localeCompare(a));
-                    for (const d of sortedDates) {
-                      if (datesMap.get(d)!.length >= 8) {
-                        latestHolders = datesMap.get(d)!;
-                        break;
-                      }
-                    }
-                    // Fallback 
-                    if (latestHolders.length === 0) latestHolders = holdersList.filter((x: any) => x.END_DATE === holdersList[0].END_DATE);
-                    
-                    // In convertible bonds, the real "restricted ratio" (大股东配售限售) isn't just the stock's "限售" marker.
-                    // By China security law, major shareholders (>=5% holding) and the largest shareholder must lock up the convertible bond for 6 months.
-                    // Since many stocks are fully tradable, their stock "限售" is 0. So we sum the ratios of shareholders >= 5% and the No.1 shareholder.
-                    const majorHolders = latestHolders.filter((x: any) => x.HOLDER_RANK === 1 || x.HOLD_NUM_RATIO >= 5);
-                    restricted_ratio = majorHolders.reduce((sum: number, x: any) => sum + (x.HOLD_NUM_RATIO || 0), 0);
-                    restrictedRatioCache.set(item.stock_id, { ratio: restricted_ratio, timestamp: Date.now() });
                   }
                 } catch (err) {
                   console.error(`Failed to fetch restricted ratio for ${item.stock_id}:`, err);
@@ -308,7 +545,7 @@ async function startServer() {
               }
             }
 
-            return { ...item, restricted_ratio, recentMaxGain, drawdownFromHigh, isThreeDaysUp, isVolumeAmplified, stockSafetyScore };
+            return { ...item, restricted_ratio, market_cap_yi, recentMaxGain, drawdownFromHigh, isThreeDaysUp, isVolumeAmplified, stockSafetyScore };
           }));
           enrichedRows.push(...chunkResults);
         }
@@ -328,6 +565,7 @@ async function startServer() {
 
   // Simple cache for restricted ratio
   const restrictedRatioCache = new Map<string, { ratio: number, timestamp: number }>();
+  const marketCapCache = new Map<string, { marketCap?: number, timestamp: number }>();
   const stockKlineCache = new Map<string, { maxGain: string, drawdown: string, isThreeDaysUp?: boolean, isVolumeAmplified?: boolean, stockSafetyScore?: number, timestamp: number }>();
 
   // API to estimate premium rate using Gemini / Fallback Heuristics
