@@ -790,7 +790,7 @@ export default function BondDashboard() {
                             <span className="text-gray-300">-</span>
                           )}
                         </td>}
-                        {dashboardView.showStockPrice && <td className="px-4 py-3">
+                        {dashboardView.showMarketProgress && <td className="px-4 py-3">
                            <div className="flex flex-col items-start gap-1">
                               <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${b.market === 'SH' ? 'bg-orange-50 text-orange-700' : 'bg-cyan-50 text-cyan-700'}`}>
                                   {b.market === 'SH' ? '沪市' : '深市'}
@@ -800,7 +800,7 @@ export default function BondDashboard() {
                               </span>
                            </div>
                         </td>}
-                        <td className="px-4 py-3">
+                        {dashboardView.showStockPrice && <td className="px-4 py-3">
                           <div className="flex items-center space-x-2">
                             {(row.isThreeDaysUp || row.isVolumeAmplified) && (
                               <div className="flex flex-col gap-0.5 items-end mt-0.5">
@@ -829,7 +829,7 @@ export default function BondDashboard() {
                             )}
                           </div>
                           <div className="text-xs font-mono text-gray-400 mt-0.5" title="转股价">转: {b.conversionPrice > 0 ? b.conversionPrice.toFixed(2) : '-'}</div>
-                        </td>
+                        </td>}
                         <td className="px-4 py-3">
                           <div className="font-mono text-blue-600 font-medium" title={`100 / ${b.conversionPrice} * ${b.stockPrice.toFixed(2)}`}>
                             {res ? res.conversionValue.toFixed(2) : '-'}
